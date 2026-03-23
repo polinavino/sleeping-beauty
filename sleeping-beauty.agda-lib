@@ -1,0 +1,3 @@
+name: sleeping-beauty
+depend: standard-library
+include: .
