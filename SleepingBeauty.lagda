@@ -13,10 +13,11 @@ The setup is as follows: Sleeping Beauty is put to sleep on Sunday. A fair coin
 is flipped. If the coin lands \textbf{Heads}, Beauty is woken once on Monday,
 then the experiment ends. If the coin lands \textbf{Tails}, Beauty is woken on
 Monday, put back to sleep with her memory of the waking erased, then woken
-again on Tuesday.
+again on Tuesday. 
 
 Upon each awakening, Beauty is asked: \emph{What is your credence that the coin
-landed Heads?}
+landed Heads?}. She does not get told either the outcome of the coin flip 
+or what day it is until she states her credence. 
 
 There are two main positions:
 
@@ -35,6 +36,7 @@ module SleepingBeauty where
 
 open import Data.Rational
 open import Data.Integer using (+_)
+open import Bayes
 open import Data.Product using (∃; _,_)
 open import Data.Bool using (Bool; true; false; T)
 open import Data.Unit using (tt)
@@ -78,6 +80,10 @@ Following the paper's approach of separating possibility from certainty, the cor
 
 \begin{code}
 
+-- What does "I am awake" tell Beauty?
+data Evidence : Set where
+  i-am-awake : Evidence
+
 -- Beauty's epistemic state upon awakening
 -- She knows she's awake, but not which awakening this is
 record EpistemicState : Set where
@@ -86,36 +92,68 @@ record EpistemicState : Set where
     possible-awakenings : Awakening → Bool
     -- At least one must be possible
     nonempty : ∃ λ a → T (possible-awakenings a)
+    -- Prior over the coin flip: the coin is fair
+    coin-prior : CoinFlip → ℚ
+    -- Prior probability over days, given evidence (waking up is evidence it's more likely Monday)
+    day-prior : Evidence → Day → ℚ
 
--- Upon awakening, all three valid awakenings are indistinguishable
-BeautyKnowledge : EpistemicState
-BeautyKnowledge = record
+-- Thirder epistemic state: uniform prior over the three valid awakening-moments.
+-- Two of the three are Monday, so P(Monday) = 2/3 and P(Tuesday) = 1/3.
+BeautyKnowledgeThird : EpistemicState
+BeautyKnowledgeThird = record
   { possible-awakenings = isValidAwakening
-  ; nonempty = (awake heads monday) , tt
+  ; nonempty             = (awake heads monday) , tt
+  ; coin-prior           = λ _ → ½
+  ; day-prior            = λ { i-am-awake monday  → (+ 2) / 3
+                             ; i-am-awake tuesday → (+ 1) / 3 }
+  }
+
+-- Halfer (Lewis) epistemic state: day-prior derived from coin-weighted day probabilities.
+-- Monday always occurs (weight 1); Tuesday only with Tails (weight 1/2).
+-- Normalised: P(Monday) = 3/4, P(Tuesday) = 1/4.
+BeautyKnowledgeHalf : EpistemicState
+BeautyKnowledgeHalf = record
+  { possible-awakenings = isValidAwakening
+  ; nonempty             = (awake heads monday) , tt
+  ; coin-prior           = λ _ → ½
+  ; day-prior            = λ { i-am-awake monday  → (+ 3) / 4
+                             ; i-am-awake tuesday → (+ 1) / 4 }
   }
 
 \end{code}
 
 3. Formalize the Two Interpretations of Probability
-This is where it gets interesting. The halfer/thirder debate stems from different interpretations of what probability means here:
+
+Both views agree on the Bayesian update rule: since Heads is impossible on
+Tuesday, $P(\text{Heads}) = P(\text{Monday}) \times P(\text{Heads} \mid
+\text{Monday})$.  They disagree on the two inputs to this formula.
 
 \begin{code}
 
--- Approach 1: Probability over COIN FLIPS (Halfer view)
--- There's one coin flip, two outcomes, fair coin
-data CoinOutcome : Set where
-  the-flip : CoinFlip → CoinOutcome
+-- A belief view captures the conditional probability of Heads given it is Monday.
+-- P(Heads) is derived as P(Monday) × P(Heads|Monday) using the day-prior from
+-- the EpistemicState, since P(Heads|Tuesday) = 0 (Tuesday only occurs with Tails).
+record BeliefView : Set where
+  field
+    p-heads-given-monday : ℚ
 
-halfer-probability : CoinFlip → ℚ
-halfer-probability heads = ½
-halfer-probability tails = ½
+p-heads : EpistemicState → BeliefView → ℚ
+p-heads es bv = EpistemicState.day-prior es i-am-awake monday
+              * BeliefView.p-heads-given-monday bv
 
--- Approach 2: Probability over AWAKENING-MOMENTS (Thirder view)
--- There are three possible awakening-moments, weighted equally
-thirder-probability : ∀ (a : Awakening) → ValidAwakening a → ℚ
-thirder-probability (awake heads monday) _ = (+ 1) / 3
-thirder-probability (awake tails monday) _ = (+ 1) / 3
-thirder-probability (awake tails tuesday) _ = (+ 1) / 3
+-- Thirder view:
+--   P(Heads|Monday) = 1/2  (coin is symmetric; neither outcome biases Monday)
+--   P(Heads) = 2/3 × 1/2 = 1/3
+thirder-view : BeliefView
+thirder-view = record
+  { p-heads-given-monday = ½ }
+
+-- Halfer view:
+--   P(Heads|Monday) = 2/3  (Monday is more probable under Heads than Tails)
+--   P(Heads) = 3/4 × 2/3 = 1/2
+halfer-view : BeliefView
+halfer-view = record
+  { p-heads-given-monday = (+ 2) / 3 }
 
 \end{code}
 
@@ -143,44 +181,68 @@ Like the hanging paper showing classical propositions can satisfy paradox constr
 
 \begin{code}
 
--- Thirder view is consistent
+-- Both views are consistent: credence is derived from the respective BeliefView
+-- via the shared Bayesian update, then held constantly across all awakenings.
 thirder-consistent : BeliefSystem
 thirder-consistent = record
-  { credence-in-heads = λ _ _ → (+ 1) / 3
-  ; consistency = λ _ _ _ _ → refl
+  { credence-in-heads = λ _ _ → p-heads BeautyKnowledgeThird thirder-view
+  ; consistency       = λ _ _ _ _ → refl
   }
 
--- Halfer view requires a different formalization...
--- The halfer argues Beauty learns nothing upon awakening,
--- so her credence stays at the prior: ½
 halfer-consistent : BeliefSystem
 halfer-consistent = record
-  { credence-in-heads = λ _ _ → ½
-  ; consistency = λ _ _ _ _ → refl
+  { credence-in-heads = λ _ _ → p-heads BeautyKnowledgeHalf halfer-view
+  ; consistency       = λ _ _ _ _ → refl
   }
 
 \end{code}
 
-6. Where the Disagreement Lives: Formalizing the Update Rule
-The real insight (paralleling the paper's "two-possible" vs "one-possible" distinction) is formalizing what counts as evidence:
+6. Where the Disagreement Lives: Different Priors, Different Posteriors
+
+By Bayes' rule (law of total probability form):
+$P(\text{Heads} \mid \text{awake}) = \sum_{d : \text{Day}} P(d \mid \text{awake}) \times P(\text{Heads} \mid d)$
+The two views share the same rule but differ in the prior $P(d \mid \text{awake})$,
+supplied by \texttt{BeautyKnowledgeThird} and \texttt{BeautyKnowledgeHalf}.
 
 \begin{code}
--- What does "I am awake" tell Beauty?
-data Evidence : Set where
-  i-am-awake : Evidence
 
--- Thirder interpretation: "I am awake" selects an awakening-moment
--- from the space of all possible awakening-moments
-thirder-sample-space : Evidence → List Awakening
-thirder-sample-space i-am-awake = 
-  awake heads monday ∷ awake tails monday ∷ awake tails tuesday ∷ []
+-- P(Heads | day) from the experiment rules and a BeliefView:
+-- Heads is impossible on Tuesday; on Monday it equals p-heads-given-monday.
+p-heads-given-day : BeliefView → Day → ℚ
+p-heads-given-day bv monday  = BeliefView.p-heads-given-monday bv
+p-heads-given-day _  tuesday = 0ℚ
 
--- Halfer interpretation: "I am awake" was guaranteed to happen
--- regardless of the coin flip, so it's not evidence about the coin
-halfer-evidence-value : Evidence → CoinFlip → ℚ
-halfer-evidence-value i-am-awake heads = 1ℚ  -- P(awake | heads) = 1
-halfer-evidence-value i-am-awake tails = 1ℚ  -- P(awake | tails) = 1
--- By Bayes: P(heads | awake) = P(awake|heads)P(heads) / P(awake) = ½
+-- Build a BayesSetup over Day for a given epistemic state and belief view:
+--   prior      d = P(d | awake)     from the EpistemicState day-prior
+--   likelihood d = P(Heads | d)     from the BeliefView
+-- normalizer₂ monday tuesday then computes
+--   Σ_{d} P(Heads | d) × P(d | awake)  =  P(Heads | awake)
+sb-bayes-setup : EpistemicState → BeliefView → Evidence → BayesSetup Day
+sb-bayes-setup es bv e = record
+  { prior      = EpistemicState.day-prior es e
+  ; likelihood = p-heads-given-day bv
+  }
+
+-- Applying Bayes with BeautyKnowledgeThird:
+-- P(Monday | awake) = 2/3,  P(Heads | Monday) = 1/2
+-- P(Heads | awake) = 2/3 × 1/2 + 1/3 × 0 = 1/3
+credence-thirder : ℚ
+credence-thirder = normalizer₂ monday tuesday
+  (sb-bayes-setup BeautyKnowledgeThird thirder-view i-am-awake)
+
+-- Applying Bayes with BeautyKnowledgeHalf:
+-- P(Monday | awake) = 3/4,  P(Heads | Monday) = 2/3
+-- P(Heads | awake) = 3/4 × 2/3 + 1/4 × 0 = 1/2
+credence-halfer : ℚ
+credence-halfer = normalizer₂ monday tuesday
+  (sb-bayes-setup BeautyKnowledgeHalf halfer-view i-am-awake)
+
+-- Proofs that the Bayesian credences equal the p-heads computed from each view
+credence-thirder-correct : credence-thirder ≡ p-heads BeautyKnowledgeThird thirder-view
+credence-thirder-correct = refl
+
+credence-halfer-correct : credence-halfer ≡ p-heads BeautyKnowledgeHalf halfer-view
+credence-halfer-correct = refl
 
 \end{code}
 
@@ -233,94 +295,36 @@ data CoinAwakeningValid : CoinFlip → Awakening → Set where
 
 \end{code}
 
-\subsection{Admissible reasoning functions}
-
-\begin{code}
-
-ReasoningFunc : Set
-ReasoningFunc = CoinFlip → Awakening → ℚ
-
-record ReasoningFuncOk (rf : ReasoningFunc) : Set where
-  field
-    indistinguishable : ∀ c₁ c₂ a₁ a₂
-                        → CoinAwakeningValid c₁ a₁
-                        → CoinAwakeningValid c₂ a₂
-                        → rf c₁ a₁ ≡ rf c₂ a₂
-
-\end{code}
-
-\subsection{Both views are admissible}
-
-The halfer and thirder reasoning functions both satisfy the constraint.  The
-rules of the situation underdetermine the credence: any constant function on
-valid pairs is admissible, so the disagreement between halfers and thirders
-cannot be resolved by the situation description alone.
-
-\begin{code}
-
-halfer-rf : ReasoningFunc
-halfer-rf _ _ = ½
-
-halfer-rf-ok : ReasoningFuncOk halfer-rf
-halfer-rf-ok = record
-  { indistinguishable = λ _ _ _ _ _ _ → refl }
-
-thirder-rf : ReasoningFunc
-thirder-rf _ _ = (+ 1) / 3
-
-thirder-rf-ok : ReasoningFuncOk thirder-rf
-thirder-rf-ok = record
-  { indistinguishable = λ _ _ _ _ _ _ → refl }
-
-\end{code}
-
-\subsection{The rules force a constant credence}
-
-Any admissible reasoning function must assign the same credence at every valid
-scenario.  The halfer--thirder debate is therefore a debate about which constant
-to choose, not about internal consistency: both sides satisfy every constraint
-imposed by the situation.
-
-\begin{code}
-
-rf-constant : ∀ (rf : ReasoningFunc) → ReasoningFuncOk rf
-              → ∀ c₁ c₂ a₁ a₂
-              → CoinAwakeningValid c₁ a₁
-              → CoinAwakeningValid c₂ a₂
-              → rf c₁ a₁ ≡ rf c₂ a₂
-rf-constant rf ok = ReasoningFuncOk.indistinguishable ok
-
-\end{code}
 
 \subsection{Source of the disagreement}
 
-The disagreement between halfers and thirders is not really about the coin ---
-it is about what the sample space is. The halfer's core claim is that upon
-waking, Beauty learns nothing she did not already know. She knew before the
-experiment that she would wake up at least once no matter what the coin showed,
-so \emph{``I am awake''} carries no evidential weight about the coin. Her prior
-was $\frac{1}{2}$ (fair coin), and nothing has updated it. The natural sample
-space is therefore the coin flip itself: one event, two outcomes, probability
-$\frac{1}{2}$ each. The number of awakenings is irrelevant because Beauty cannot
-count them --- her memory is erased between them, so the tails scenario does not
-get to ``vote twice.''
-
-The thirder rejects this framing. Beauty should reason about \emph{which
-awakening-moment she is currently in}, not about the coin in isolation. The
-sample space is the set of (coin, day) pairs --- three equally likely moments
---- and $P(\text{Heads}) = \frac{1}{3}$ because only one of those three moments
-corresponds to Heads.
+The formalization makes the source of the disagreement precise: it lies
+entirely in Beauty's \emph{day-prior} --- her probability distribution over
+days upon waking, encoded in the \texttt{day-prior} field of her
+\texttt{EpistemicState}.  Both views apply the same Bayesian update rule
+(\texttt{bayes-rule}), share the same fair coin prior, and agree that
+$P(\text{Heads} \mid \text{Tuesday}) = 0$.  The only thing that differs
+between \texttt{BeautyKnowledgeThird} and \texttt{BeautyKnowledgeHalf} is
+$P(\text{Monday} \mid \text{awake})$:
 
 \begin{center}
-\begin{tabular}{ll}
-  \textbf{Halfer}  & sample space $= \{\text{Heads},\, \text{Tails}\}$ \\
-  \textbf{Thirder} & sample space $= \{\text{Heads/Mon},\, \text{Tails/Mon},\, \text{Tails/Tue}\}$
+\begin{tabular}{lll}
+  & $P(\text{Monday} \mid \text{awake})$ & $P(\text{Heads} \mid \text{awake})$ \\
+  \hline
+  \textbf{Thirder} & $\frac{2}{3}$ & $\frac{2}{3} \times \frac{1}{2} = \frac{1}{3}$ \\
+  \textbf{Halfer}  & $\frac{3}{4}$ & $\frac{3}{4} \times \frac{2}{3} = \frac{1}{2}$ \\
 \end{tabular}
 \end{center}
 
-A reasoning function maps the actual coin and current awakening to a credence.
-It is admissible when it respects indistinguishability: because Beauty wakes
-with no memory and the same subjective experience in every valid scenario, her
-credence must be identical across all valid (coin, awakening) pairs.
+The familiar thirder slogan --- ``the three awakening-moments are equally
+likely, each with probability $\frac{1}{3}$'' --- is therefore not a
+primitive assumption but a \emph{derived consequence} of the day-prior.
+Given $P(\text{Monday} \mid \text{awake}) = \frac{2}{3}$ and a fair coin,
+the two Monday scenarios split that mass equally
+($P(\text{Heads/Mon}) = P(\text{Tails/Mon}) = \frac{1}{3}$), and the single
+Tuesday scenario inherits the remaining $\frac{1}{3}$.  The real commitment
+is to the day-prior, encoded in \texttt{BeautyKnowledgeThird}; the uniform
+distribution over awakening-moments is just what that prior looks like once
+coin symmetry on Monday is applied.
 
 \end{document}
