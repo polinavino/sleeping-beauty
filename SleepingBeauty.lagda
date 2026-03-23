@@ -235,35 +235,6 @@ data CoinAwakeningValid : CoinFlip → Awakening → Set where
 
 \subsection{Admissible reasoning functions}
 
-The disagreement between halfers and thirders is not really about the coin ---
-it is about what the sample space is. The halfer's core claim is that upon
-waking, Beauty learns nothing she did not already know. She knew before the
-experiment that she would wake up at least once no matter what the coin showed,
-so \emph{``I am awake''} carries no evidential weight about the coin. Her prior
-was $\frac{1}{2}$ (fair coin), and nothing has updated it. The natural sample
-space is therefore the coin flip itself: one event, two outcomes, probability
-$\frac{1}{2}$ each. The number of awakenings is irrelevant because Beauty cannot
-count them --- her memory is erased between them, so the tails scenario does not
-get to ``vote twice.''
-
-The thirder rejects this framing. Beauty should reason about \emph{which
-awakening-moment she is currently in}, not about the coin in isolation. The
-sample space is the set of (coin, day) pairs --- three equally likely moments
---- and $P(\text{Heads}) = \frac{1}{3}$ because only one of those three moments
-corresponds to Heads.
-
-\begin{center}
-\begin{tabular}{ll}
-  \textbf{Halfer}  & sample space $= \{\text{Heads},\, \text{Tails}\}$ \\
-  \textbf{Thirder} & sample space $= \{\text{Heads/Mon},\, \text{Tails/Mon},\, \text{Tails/Tue}\}$
-\end{tabular}
-\end{center}
-
-A reasoning function maps the actual coin and current awakening to a credence.
-It is admissible when it respects indistinguishability: because Beauty wakes
-with no memory and the same subjective experience in every valid scenario, her
-credence must be identical across all valid (coin, awakening) pairs.
-
 \begin{code}
 
 ReasoningFunc : Set
@@ -320,5 +291,36 @@ rf-constant : ∀ (rf : ReasoningFunc) → ReasoningFuncOk rf
 rf-constant rf ok = ReasoningFuncOk.indistinguishable ok
 
 \end{code}
+
+\subsection{Source of the disagreement}
+
+The disagreement between halfers and thirders is not really about the coin ---
+it is about what the sample space is. The halfer's core claim is that upon
+waking, Beauty learns nothing she did not already know. She knew before the
+experiment that she would wake up at least once no matter what the coin showed,
+so \emph{``I am awake''} carries no evidential weight about the coin. Her prior
+was $\frac{1}{2}$ (fair coin), and nothing has updated it. The natural sample
+space is therefore the coin flip itself: one event, two outcomes, probability
+$\frac{1}{2}$ each. The number of awakenings is irrelevant because Beauty cannot
+count them --- her memory is erased between them, so the tails scenario does not
+get to ``vote twice.''
+
+The thirder rejects this framing. Beauty should reason about \emph{which
+awakening-moment she is currently in}, not about the coin in isolation. The
+sample space is the set of (coin, day) pairs --- three equally likely moments
+--- and $P(\text{Heads}) = \frac{1}{3}$ because only one of those three moments
+corresponds to Heads.
+
+\begin{center}
+\begin{tabular}{ll}
+  \textbf{Halfer}  & sample space $= \{\text{Heads},\, \text{Tails}\}$ \\
+  \textbf{Thirder} & sample space $= \{\text{Heads/Mon},\, \text{Tails/Mon},\, \text{Tails/Tue}\}$
+\end{tabular}
+\end{center}
+
+A reasoning function maps the actual coin and current awakening to a credence.
+It is admissible when it respects indistinguishability: because Beauty wakes
+with no memory and the same subjective experience in every valid scenario, her
+credence must be identical across all valid (coin, awakening) pairs.
 
 \end{document}
