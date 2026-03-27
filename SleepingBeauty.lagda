@@ -32,21 +32,24 @@ There are two main positions:
 \section{Formalisation}
 
 \begin{code}
+
 module SleepingBeauty where
 
-open import Data.Rational
-open import Data.Integer using (+_)
-open import Bayes
-open import Data.Product using (∃; _,_)
-open import Data.Bool using (Bool; true; false; T)
-open import Data.Unit using (tt)
-open import Data.List using (List; _∷_; [])
-open import Relation.Binary.PropositionalEquality using (_≡_; refl)
+open import Relation.Binary.PropositionalEquality using (_≡_; refl; sym; trans; cong; cong₂)
+open import Data.Product using (Σ; _×_; _,_; proj₁; proj₂)
+open import Data.Sum     using (_⊎_; inj₁; inj₂)
+open import Data.Empty   using (⊥; ⊥-elim)
+open import Data.Unit    using (⊤; tt)
+
 \end{code}
 
-The halfer credence for Heads:
+\subsection{Sample space}
+
+The sample space $\Omega$ for the Sleeping Beauty problem is the set of all
+\emph{(coin outcome, day)} pairs that can arise during the experiment.
 
 \begin{code}
+
 data CoinFlip : Set where
   heads : CoinFlip
   tails : CoinFlip
@@ -55,276 +58,300 @@ data Day : Set where
   monday  : Day
   tuesday : Day
 
-data Awakening : Set where
-  -- An awakening is characterized by the coin result and the day
-  awake : CoinFlip → Day → Awakening
-
--- Not all combinations are valid awakenings
-data ValidAwakening : Awakening → Set where
-  mon-heads : ValidAwakening (awake heads monday)
-  mon-tails : ValidAwakening (awake tails monday)
-  tue-tails : ValidAwakening (awake tails tuesday)
-  -- Note: (awake heads tuesday) is NOT valid
-
-isValidAwakening : Awakening → Bool
-isValidAwakening (awake heads monday)  = true
-isValidAwakening (awake tails monday)  = true
-isValidAwakening (awake tails tuesday) = true
-isValidAwakening (awake heads tuesday) = false
+Ω : Set
+Ω = CoinFlip × Day
 
 \end{code}
 
-2. Formalize Indistinguishability (The Key Insight)
-Following the paper's approach of separating possibility from certainty, the core of Sleeping Beauty is that she cannot distinguish which awakening she's in:
+\subsection{Events as predicates}
 
+Following \texttt{CategoricalCrypto.ProbabilisticLogic}, events are
+predicates $\Omega \to \mathsf{Set}$.
 
 \begin{code}
 
--- What does "I am awake" tell Beauty?
-data Evidence : Set where
-  i-am-awake : Evidence
+-- Set-theoretic operations on events
+_∩_ _∪_ : (Ω → Set) → (Ω → Set) → Ω → Set
+(X ∩ Y) ω = X ω × Y ω
+(X ∪ Y) ω = X ω ⊎ Y ω
 
--- Beauty's epistemic state upon awakening
--- She knows she's awake, but not which awakening this is
-record EpistemicState : Set where
+∅ U : Ω → Set
+∅ _ = ⊥
+U _ = ⊤
+
+disjoint : (X Y : Ω → Set) → Set
+disjoint X Y = ∀ {ω} → X ω → Y ω → ⊥
+
+-- A binary partition of Ω
+record Partition (X Y : Ω → Set) : Set where
   field
-    -- The set of awakenings compatible with her observations
-    possible-awakenings : Awakening → Bool
-    -- At least one must be possible
-    nonempty : ∃ λ a → T (possible-awakenings a)
-    -- Prior over the coin flip: the coin is fair
-    coin-prior : CoinFlip → ℚ
-    -- Prior probability over days, given evidence (waking up is evidence it's more likely Monday)
-    day-prior : Evidence → Day → ℚ
+    disj   : disjoint X Y
+    covers : ∀ ω → X ω ⊎ Y ω
 
--- Thirder epistemic state: uniform prior over the three valid awakening-moments.
--- Two of the three are Monday, so P(Monday) = 2/3 and P(Tuesday) = 1/3.
-BeautyKnowledgeThird : EpistemicState
-BeautyKnowledgeThird = record
-  { possible-awakenings = isValidAwakening
-  ; nonempty             = (awake heads monday) , tt
-  ; coin-prior           = λ _ → ½
-  ; day-prior            = λ { i-am-awake monday  → (+ 2) / 3
-                             ; i-am-awake tuesday → (+ 1) / 3 }
-  }
-
--- Halfer (Lewis) epistemic state: day-prior derived from coin-weighted day probabilities.
--- Monday always occurs (weight 1); Tuesday only with Tails (weight 1/2).
--- Normalised: P(Monday) = 3/4, P(Tuesday) = 1/4.
-BeautyKnowledgeHalf : EpistemicState
-BeautyKnowledgeHalf = record
-  { possible-awakenings = isValidAwakening
-  ; nonempty             = (awake heads monday) , tt
-  ; coin-prior           = λ _ → ½
-  ; day-prior            = λ { i-am-awake monday  → (+ 3) / 4
-                             ; i-am-awake tuesday → (+ 1) / 4 }
-  }
+-- The four basic SB events
+IsTails IsHeads IsMonday IsTuesday : Ω → Set
+IsTails   (c , _) = c ≡ tails
+IsHeads   (c , _) = c ≡ heads
+IsMonday  (_ , d) = d ≡ monday
+IsTuesday (_ , d) = d ≡ tuesday
 
 \end{code}
 
-3. Formalize the Two Interpretations of Probability
+\subsection{Abstract probability frame}
 
-Both views agree on the Bayesian update rule: since Heads is impossible on
-Tuesday, $P(\text{Heads}) = P(\text{Monday}) \times P(\text{Heads} \mid
-\text{Monday})$.  They disagree on the two inputs to this formula.
+We work parametrically over an \emph{abstract probability frame}, which
+captures the axioms of the \texttt{Abstract} record from
+\texttt{CategoricalCrypto.ProbabilisticLogic} that we actually need.
+The two load-bearing axioms are the conditional-probability identity and
+finite additivity for disjoint events.
 
 \begin{code}
 
--- A belief view captures the conditional probability of Heads given it is Monday.
--- P(Heads) is derived as P(Monday) × P(Heads|Monday) using the day-prior from
--- the EpistemicState, since P(Heads|Tuesday) = 0 (Tuesday only occurs with Tails).
-record BeliefView : Set where
+-- Abstract probability type — we leave it abstract so the module can be
+-- instantiated with ℚ or any other probability semiring.
+record ProbFrame : Set₁ where
   field
-    p-heads-given-monday : ℚ
+    Prob   : Set
+    _⊕_    : Prob → Prob → Prob   -- addition of probabilities
+    _⊗_    : Prob → Prob → Prob   -- multiplication of probabilities
+    0p 1p ½p : Prob
 
-p-heads : EpistemicState → BeliefView → ℚ
-p-heads es bv = EpistemicState.day-prior es i-am-awake monday
-              * BeliefView.p-heads-given-monday bv
+    -- Distributions over Ω
+    Distr  : Set
+    _∙_    : Distr → (Ω → Set) → Prob
 
--- Thirder view:
---   P(Heads|Monday) = 1/2  (coin is symmetric; neither outcome biases Monday)
---   P(Heads) = 2/3 × 1/2 = 1/3
-thirder-view : BeliefView
-thirder-view = record
-  { p-heads-given-monday = ½ }
+    -- Conditional distribution P ∣ X, viewed back on Ω
+    _∣_    : Distr → (X : Ω → Set) → Distr
 
--- Halfer view:
---   P(Heads|Monday) = 2/3  (Monday is more probable under Heads than Tails)
---   P(Heads) = 3/4 × 2/3 = 1/2
-halfer-view : BeliefView
-halfer-view = record
-  { p-heads-given-monday = (+ 2) / 3 }
+    -- Axioms (from Abstract in ProbabilisticLogic.agda)
+    cond-prob      : ∀ {P : Distr} {X Y : Ω → Set}
+                   → (P ∙ X) ⊗ ((P ∣ X) ∙ Y)  ≡  P ∙ (X ∩ Y)
+
+    disjoint-add   : ∀ {P : Distr} {X Y : Ω → Set}
+                   → disjoint X Y
+                   → (P ∙ X) ⊕ (P ∙ Y)  ≡  P ∙ (X ∪ Y)
+
+    -- Distributions respect extensional equality of events
+    ∙-cong         : ∀ {P : Distr} {X Y : Ω → Set}
+                   → (∀ ω → X ω → Y ω) → (∀ ω → Y ω → X ω)
+                   → P ∙ X ≡ P ∙ Y
+
+    -- Rational arithmetic laws (hold when Prob = ℚ)
+    mul-1p     : ∀ (x : Prob) → x ⊗ 1p ≡ x
+    ½-cancel   : ∀ {x y : Prob} → x ⊗ ½p ≡ y ⊗ ½p → x ≡ y
+    ½-double   : ∀ (x : Prob) → ((x ⊗ ½p) ⊕ (x ⊗ ½p)) ≡ x
+    ⊕-cancel-r : ∀ {x y z : Prob} → (x ⊕ z) ≡ (y ⊕ z) → x ≡ y
 
 \end{code}
 
-4. Formalize the "Self-Location" Uncertainty (Novel Contribution)
-Following the hanging paper's insight about parametrizing beliefs by "today," you can parametrize by which awakening Beauty is in:
+\subsection{Chapman–Kolmogorov / law of total probability}
+
+For a binary partition $\{X, Y\}$ of $\Omega$ the \emph{law of total
+probability} reads
+\[
+  P(Z) \;=\; P(X)\cdot P(Z\mid X) \;+\; P(Y)\cdot P(Z\mid Y).
+\]
+In the abstract frame this is a consequence of \texttt{cond-prob} and
+\texttt{disjoint-add}; it instantiates the Chapman–Kolmogorov identity for
+Kleisli composition in the probability monad (see nLab: \emph{monads of
+probability, measures, and valuations}).
 
 \begin{code}
 
--- Beliefs parametrized by the actual state of the world
--- (which Beauty doesn't know)
-record BeliefSystem : Set₁ where
+module ChapmanKolmogorov (F : ProbFrame) where
+  open ProbFrame F
+
+  -- The Chapman–Kolmogorov law of total probability for a binary partition.
+  --
+  --   P ∙ Z  =  (P ∙ X) ⊗ ((P ∣ X) ∙ Z)  ⊕  (P ∙ Y) ⊗ ((P ∣ Y) ∙ Z)
+  --
+  ck : ∀ (P : Distr) {X Y : Ω → Set} (Z : Ω → Set)
+     → Partition X Y
+     → (((P ∙ X) ⊗ ((P ∣ X) ∙ Z)) ⊕ ((P ∙ Y) ⊗ ((P ∣ Y) ∙ Z))) ≡ (P ∙ Z)
+  ck P {X} {Y} Z part =
+    trans (cong₂ _⊕_ cond-prob cond-prob)
+    (trans (disjoint-add dXZ-YZ)
+           (∙-cong {P = P} {X = (X ∩ Z) ∪ (Y ∩ Z)} {Y = Z} bwd fwd))
+    where
+      dXZ-YZ : disjoint (X ∩ Z) (Y ∩ Z)
+      dXZ-YZ (xω , _) (yω , _) = Partition.disj part xω yω
+      bwd : ∀ ω → ((X ∩ Z) ∪ (Y ∩ Z)) ω → Z ω
+      bwd ω (inj₁ (_ , zω)) = zω
+      bwd ω (inj₂ (_ , zω)) = zω
+      fwd : ∀ ω → Z ω → ((X ∩ Z) ∪ (Y ∩ Z)) ω
+      fwd ω zω with Partition.covers part ω
+      ... | inj₁ xω = inj₁ (xω , zω)
+      ... | inj₂ yω = inj₂ (yω , zω)
+
+\end{code}
+
+\subsection{Application to Sleeping Beauty}
+
+We now instantiate \texttt{ck} for the two Chapman–Kolmogorov identities
+that govern the Sleeping Beauty problem.
+
+\begin{code}
+
+-- Halfer priors: the coin is fair (P(Heads) = 1/2 as a marginal),
+-- plus the uncontroversial structural facts about the experiment.
+record HalferPriors (F : ProbFrame) (wakingMeasure : ProbFrame.Distr F) : Set where
+  open ProbFrame F
   field
-    -- Given the true state, what does Beauty believe about the coin?
-    credence-in-heads : (actual : Awakening) → ValidAwakening actual → ℚ
-    
-    -- Constraint: beliefs must be consistent across indistinguishable states
-    -- If Beauty can't tell states apart, her credence must be the same
-    consistency : (a₁ a₂ : Awakening) → (v₁ : ValidAwakening a₁) → (v₂ : ValidAwakening a₂)
-                → credence-in-heads a₁ v₁ ≡ credence-in-heads a₂ v₂
+    -- Fair coin: the marginal probability of heads is 1/2.
+    --     P(Heads) = 1/2
+    heads-prior               : wakingMeasure ∙ IsHeads ≡ ½p
 
-\end{code}
+    -- (2) SB is never woken on Tuesday when the coin landed Heads.
+    --     P(Heads | Tuesday) = 0
+    heads-given-tuesday : (wakingMeasure ∣ IsTuesday) ∙ IsHeads  ≡ 0p
 
-5. The Key Theorem: Both Views Are Internally Consistent
-Like the hanging paper showing classical propositions can satisfy paradox constraints, you can show both halfer and thirder views are internally consistent:
+    -- (3) If the coin landed Heads, SB is only woken on Monday.
+    --     P(Monday | Heads) = 1
+    monday-given-heads  : (wakingMeasure ∣ IsHeads)   ∙ IsMonday ≡ 1p
 
-\begin{code}
+    -- (4) Self-locating uncertainty: if Tails, SB is equally likely to be
+    --     woken on Monday or Tuesday.
+    --     P(Monday | Tails) = 1/2
+    monday-given-tails  : (wakingMeasure ∣ IsTails)   ∙ IsMonday ≡ ½p
 
--- Both views are consistent: credence is derived from the respective BeliefView
--- via the shared Bayesian update, then held constantly across all awakenings.
-thirder-consistent : BeliefSystem
-thirder-consistent = record
-  { credence-in-heads = λ _ _ → p-heads BeautyKnowledgeThird thirder-view
-  ; consistency       = λ _ _ _ _ → refl
-  }
-
-halfer-consistent : BeliefSystem
-halfer-consistent = record
-  { credence-in-heads = λ _ _ → p-heads BeautyKnowledgeHalf halfer-view
-  ; consistency       = λ _ _ _ _ → refl
-  }
-
-\end{code}
-
-6. Where the Disagreement Lives: Different Priors, Different Posteriors
-
-By Bayes' rule (law of total probability form):
-$P(\text{Heads} \mid \text{awake}) = \sum_{d : \text{Day}} P(d \mid \text{awake}) \times P(\text{Heads} \mid d)$
-The two views share the same rule but differ in the prior $P(d \mid \text{awake})$,
-supplied by \texttt{BeautyKnowledgeThird} and \texttt{BeautyKnowledgeHalf}.
-
-\begin{code}
-
--- P(Heads | day) from the experiment rules and a BeliefView:
--- Heads is impossible on Tuesday; on Monday it equals p-heads-given-monday.
-p-heads-given-day : BeliefView → Day → ℚ
-p-heads-given-day bv monday  = BeliefView.p-heads-given-monday bv
-p-heads-given-day _  tuesday = 0ℚ
-
--- Build a BayesSetup over Day for a given epistemic state and belief view:
---   prior      d = P(d | awake)     from the EpistemicState day-prior
---   likelihood d = P(Heads | d)     from the BeliefView
--- normalizer₂ monday tuesday then computes
---   Σ_{d} P(Heads | d) × P(d | awake)  =  P(Heads | awake)
-sb-bayes-setup : EpistemicState → BeliefView → Evidence → BayesSetup Day
-sb-bayes-setup es bv e = record
-  { prior      = EpistemicState.day-prior es e
-  ; likelihood = p-heads-given-day bv
-  }
-
--- Applying Bayes with BeautyKnowledgeThird:
--- P(Monday | awake) = 2/3,  P(Heads | Monday) = 1/2
--- P(Heads | awake) = 2/3 × 1/2 + 1/3 × 0 = 1/3
-credence-thirder : ℚ
-credence-thirder = normalizer₂ monday tuesday
-  (sb-bayes-setup BeautyKnowledgeThird thirder-view i-am-awake)
-
--- Applying Bayes with BeautyKnowledgeHalf:
--- P(Monday | awake) = 3/4,  P(Heads | Monday) = 2/3
--- P(Heads | awake) = 3/4 × 2/3 + 1/4 × 0 = 1/2
-credence-halfer : ℚ
-credence-halfer = normalizer₂ monday tuesday
-  (sb-bayes-setup BeautyKnowledgeHalf halfer-view i-am-awake)
-
--- Proofs that the Bayesian credences equal the p-heads computed from each view
-credence-thirder-correct : credence-thirder ≡ p-heads BeautyKnowledgeThird thirder-view
-credence-thirder-correct = refl
-
-credence-halfer-correct : credence-halfer ≡ p-heads BeautyKnowledgeHalf halfer-view
-credence-halfer-correct = refl
-
-\end{code}
-
-7. Formalize the Betting Arguments
-One way to make the problem concrete is through bets:
-
-\begin{code}
-
-record Bet : Set where
+-- Thirder priors: CoinFlip and Day are sampled independently —
+-- Monday carries no information about the coin outcome.
+record ThirderPriors (F : ProbFrame) (wakingMeasure : ProbFrame.Distr F) : Set where
+  open ProbFrame F
   field
-    stake : ℚ
-    pays-on : CoinFlip → ℚ
+    -- (1) Independence: conditioning on Monday leaves the coin 50/50.
+    --     P(Tails | Monday) = 1/2
+    tails-given-monday  : (wakingMeasure ∣ IsMonday)  ∙ IsTails  ≡ ½p
 
-open Bet
+    -- (2) SB is never woken on Tuesday when the coin landed Heads.
+    --     P(Heads | Tuesday) = 0
+    heads-given-tuesday : (wakingMeasure ∣ IsTuesday) ∙ IsHeads  ≡ 0p
 
--- Expected value depends on how you count!
--- Per-awakening betting (thirder-friendly)
-ev-per-awakening : Bet → ℚ
-ev-per-awakening b = ((+ 1) / 3 * pays-on b heads) + ((+ 2) / 3 * pays-on b tails)
+    -- (3) If the coin landed Heads, SB is only woken on Monday.
+    --     P(Monday | Heads) = 1
+    monday-given-heads  : (wakingMeasure ∣ IsHeads)   ∙ IsMonday ≡ 1p
 
--- Per-experiment betting (halfer-friendly)  
-ev-per-experiment : Bet → ℚ
-ev-per-experiment b = (½ * pays-on b heads) + (½ * pays-on b tails)
+    -- (4) Self-locating uncertainty: if Tails, SB is equally likely to be
+    --     woken on Monday or Tuesday.
+    --     P(Monday | Tails) = 1/2
+    monday-given-tails  : (wakingMeasure ∣ IsTails)   ∙ IsMonday ≡ ½p
+
+module SBApplication
+    (F             : ProbFrame)
+    (wakingMeasure : ProbFrame.Distr F)
+    (priors        : ThirderPriors F wakingMeasure) where
+  open ProbFrame F
+  open ChapmanKolmogorov F
+  open ThirderPriors priors
+
+  -- The partition of Ω by day
+  dayPartition : Partition IsMonday IsTuesday
+  dayPartition = record
+    { disj   = λ { refl () }
+    ; covers = λ { (c , monday)  → inj₁ refl
+                 ; (c , tuesday) → inj₂ refl }
+    }
+
+  -- The partition of Ω by coin outcome
+  coinPartition : Partition IsHeads IsTails
+  coinPartition = record
+    { disj   = λ { refl () }
+    ; covers = λ { (heads , d) → inj₁ refl
+                 ; (tails , d) → inj₂ refl }
+    }
+
+  -- P(Heads) = P(Monday) × P(Heads | Monday) + P(Tuesday) × P(Heads | Tuesday)
+  formula-1 : (((wakingMeasure ∙ IsMonday) ⊗ ((wakingMeasure ∣ IsMonday) ∙ IsHeads))
+             ⊕ ((wakingMeasure ∙ IsTuesday) ⊗ ((wakingMeasure ∣ IsTuesday) ∙ IsHeads)))
+             ≡ (wakingMeasure ∙ IsHeads)
+  formula-1 = ck wakingMeasure IsHeads dayPartition
+
+  -- P(Monday) = P(Heads) × P(Monday | Heads) + P(Tails) × P(Monday | Tails)
+  formula-2 : (((wakingMeasure ∙ IsHeads) ⊗ ((wakingMeasure ∣ IsHeads) ∙ IsMonday))
+             ⊕ ((wakingMeasure ∙ IsTails) ⊗ ((wakingMeasure ∣ IsTails) ∙ IsMonday)))
+             ≡ (wakingMeasure ∙ IsMonday)
+  formula-2 = ck wakingMeasure IsMonday coinPartition
+
+  -- The thirder conclusion: P(Tails) = 2 × P(Heads).
+  --
+  -- Proof sketch:
+  --  (a) cond-prob applied twice + priors 1 and 4 gives
+  --      P(Monday) × ½ = P(Monday ∩ Tails) = P(Tails) × ½,
+  --      so P(Monday) = P(Tails).
+  --  (b) formula-2 + priors 3 and 4 gives P(Heads) + P(Tails) × ½ = P(Monday).
+  --  (c) Substituting (a) into (b): P(Heads) + P(Tails) × ½ = P(Tails),
+  --      so P(Heads) = P(Tails) × ½, i.e. P(Tails) = P(Heads) + P(Heads).
+  tails-twice-heads : (wakingMeasure ∙ IsTails) ≡ ((wakingMeasure ∙ IsHeads) ⊕ (wakingMeasure ∙ IsHeads))
+  tails-twice-heads =
+    let
+      -- (a1) P(Monday) × ½ = P(Monday ∩ Tails)  [cond-prob + prior 1]
+      monday-tails : (wakingMeasure ∙ IsMonday) ⊗ ½p ≡ wakingMeasure ∙ (IsMonday ∩ IsTails)
+      monday-tails = trans (sym (cong ((wakingMeasure ∙ IsMonday) ⊗_) tails-given-monday))
+                           cond-prob
+
+      -- (a2) P(Tails) × ½ = P(Tails ∩ Monday)  [cond-prob + prior 4]
+      tails-monday : (wakingMeasure ∙ IsTails) ⊗ ½p ≡ wakingMeasure ∙ (IsTails ∩ IsMonday)
+      tails-monday = trans (sym (cong ((wakingMeasure ∙ IsTails) ⊗_) monday-given-tails))
+                           cond-prob
+
+      -- P(Monday ∩ Tails) = P(Tails ∩ Monday)  [∩ is symmetric]
+      ∩-swap : wakingMeasure ∙ (IsMonday ∩ IsTails) ≡ wakingMeasure ∙ (IsTails ∩ IsMonday)
+      ∩-swap = ∙-cong (λ ω (m , t) → t , m) (λ ω (t , m) → m , t)
+
+      -- P(Monday) × ½ = P(Tails) × ½
+      eq½ : (wakingMeasure ∙ IsMonday) ⊗ ½p ≡ (wakingMeasure ∙ IsTails) ⊗ ½p
+      eq½ = trans monday-tails (trans ∩-swap (sym tails-monday))
+
+      -- (a) P(Monday) = P(Tails)
+      M≡T : wakingMeasure ∙ IsMonday ≡ wakingMeasure ∙ IsTails
+      M≡T = ½-cancel eq½
+
+      -- (b) Simplify formula-2 using priors 3 and 4:
+      --     P(Heads) + P(Tails) × ½ = P(Monday)
+      from-f2 : (wakingMeasure ∙ IsHeads) ⊕ ((wakingMeasure ∙ IsTails) ⊗ ½p) ≡ wakingMeasure ∙ IsMonday
+      from-f2 = trans
+        (sym (cong₂ _⊕_
+          (trans (cong ((wakingMeasure ∙ IsHeads) ⊗_) monday-given-heads) (mul-1p _))
+          (cong  ((wakingMeasure ∙ IsTails) ⊗_)       monday-given-tails)))
+        formula-2
+
+      -- (c) P(Heads) + P(Tails) × ½ = P(Tails)
+      H⊕T½≡T : (wakingMeasure ∙ IsHeads) ⊕ ((wakingMeasure ∙ IsTails) ⊗ ½p) ≡ wakingMeasure ∙ IsTails
+      H⊕T½≡T = trans from-f2 M≡T
+
+      -- P(Heads) = P(Tails) × ½
+      H≡T½ : wakingMeasure ∙ IsHeads ≡ (wakingMeasure ∙ IsTails) ⊗ ½p
+      H≡T½ = ⊕-cancel-r (trans H⊕T½≡T (sym (½-double _)))
+
+    in trans (sym (½-double (wakingMeasure ∙ IsTails)))
+             (cong₂ _⊕_ (sym H≡T½) (sym H≡T½))
+
 \end{code}
 
-\section{The Parametric Approach}
+\subsection{What the two protocols are counting}
 
-In the unexpected hanging formalization, beliefs are parametrized by the actual
-execution day: a reasoning function takes \emph{(actual hanging day, today,
-query day)} and the constraint \texttt{hangingOnTodayIsReasoningAbout} picks out
-which such functions are consistent with the rules of the situation.
+The halfer and thirder positions are not merely different answers to the same question: they
+reflect different choices of \emph{what} the probability measure $\mu$ is defined over.
+The halfer treats each \emph{experiment run} as a single unit of probability mass.
+Because the coin is fair, exactly half of all runs land Heads, so the marginal weight of
+Heads waking occasions is $\frac{1}{2}$.
+Tails runs are weighted the same as Heads runs, but each Tails run produces \emph{two}
+waking occasions; the measure is therefore concentrated on runs, not wakings.
 
-We adopt the same structure here. A reasoning function takes the actual coin
-result and Beauty's current awakening and returns her credence in heads. The
-rules of the Sleeping Beauty situation --- which (coin, awakening) pairs can
-actually occur, and that Beauty cannot distinguish between them --- then
-characterise the admissible reasoning functions.
+The thirder, by contrast, assigns equal weight to each \emph{waking occasion}.
+Under this accounting there are three equally-possible situations
+(Heads/Monday, Tails/Monday, Tails/Tuesday), so each carries weight $\frac{1}{3}$.
+Conditioning on Monday still leaves the coin 50/50 --- that is exactly the prior
+\texttt{tails-given-monday} --- because Monday is equally likely under both outcomes.
 
-\subsection{The rules of the situation}
-
-The valid (coin, awakening) pairs encode exactly what the experimenter knows
-that Beauty does not: which awakening is actually occurring.
-
-\begin{code}
-
-data CoinAwakeningValid : CoinFlip → Awakening → Set where
-  val-heads-mon : CoinAwakeningValid heads (awake heads monday)
-  val-tails-mon : CoinAwakeningValid tails (awake tails monday)
-  val-tails-tue : CoinAwakeningValid tails (awake tails tuesday)
-
-\end{code}
-
-
-\subsection{Source of the disagreement}
-
-The formalization makes the source of the disagreement precise: it lies
-entirely in Beauty's \emph{day-prior} --- her probability distribution over
-days upon waking, encoded in the \texttt{day-prior} field of her
-\texttt{EpistemicState}.  Both views apply the same Bayesian update rule
-(\texttt{bayes-rule}), share the same fair coin prior, and agree that
-$P(\text{Heads} \mid \text{Tuesday}) = 0$.  The only thing that differs
-between \texttt{BeautyKnowledgeThird} and \texttt{BeautyKnowledgeHalf} is
-$P(\text{Monday} \mid \text{awake})$:
-
-\begin{center}
-\begin{tabular}{lll}
-  & $P(\text{Monday} \mid \text{awake})$ & $P(\text{Heads} \mid \text{awake})$ \\
-  \hline
-  \textbf{Thirder} & $\frac{2}{3}$ & $\frac{2}{3} \times \frac{1}{2} = \frac{1}{3}$ \\
-  \textbf{Halfer}  & $\frac{3}{4}$ & $\frac{3}{4} \times \frac{2}{3} = \frac{1}{2}$ \\
-\end{tabular}
-\end{center}
-
-The familiar thirder slogan --- ``the three awakening-moments are equally
-likely, each with probability $\frac{1}{3}$'' --- is therefore not a
-primitive assumption but a \emph{derived consequence} of the day-prior.
-Given $P(\text{Monday} \mid \text{awake}) = \frac{2}{3}$ and a fair coin,
-the two Monday scenarios split that mass equally
-($P(\text{Heads/Mon}) = P(\text{Tails/Mon}) = \frac{1}{3}$), and the single
-Tuesday scenario inherits the remaining $\frac{1}{3}$.  The real commitment
-is to the day-prior, encoded in \texttt{BeautyKnowledgeThird}; the uniform
-distribution over awakening-moments is just what that prior looks like once
-coin symmetry on Monday is applied.
+Formally, the disagreement surfaces as a contradiction: no single distribution
+$\mu$ can satisfy \texttt{HalferPriors} and \texttt{ThirderPriors} simultaneously.
+The halfer's constraint \texttt{heads-prior} pins the marginal $\mu({\rm Heads}) = \tfrac{1}{2}$,
+whereas \texttt{tails-twice-heads} derived from the thirder's constraint forces
+$\mu({\rm Tails}) = 2\,\mu({\rm Heads})$; together with normalization these two claims
+are inconsistent.
+The two records therefore do not describe competing beliefs about the same probability
+space --- they describe \emph{different probability spaces} built from the same sample
+space $\Omega$, one weighted by runs and one weighted by wakings.
 
 \end{document}
