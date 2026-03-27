@@ -341,8 +341,30 @@ waking occasions; the measure is therefore concentrated on runs, not wakings.
 The thirder, by contrast, assigns equal weight to each \emph{waking occasion}.
 Under this accounting there are three equally-possible situations
 (Heads/Monday, Tails/Monday, Tails/Tuesday), so each carries weight $\frac{1}{3}$.
-Conditioning on Monday still leaves the coin 50/50 --- that is exactly the prior
-\texttt{tails-given-monday} --- because Monday is equally likely under both outcomes.
+
+The thirder position can be motivated by a \emph{self-locating indifference} principle:
+upon learning a piece of information, distribute weight equally over all waking occasions
+consistent with that information.
+Applied to the day: Tuesday is consistent with only one occasion (Tails/Tuesday), so
+learning it is Tuesday collapses all weight there; Monday is consistent with two occasions
+(Heads/Monday and Tails/Monday), so each receives weight $\frac{1}{2}$.
+Applied to the coin: Heads is consistent with only one occasion (Heads/Monday), leaving
+no residual uncertainty about the day; Tails is consistent with two occasions
+(Tails/Monday and Tails/Tuesday), so each receives weight $\frac{1}{2}$.
+This principle immediately yields all four of the thirder's priors, including
+\texttt{tails-given-monday}$\;=\tfrac{1}{2}$.
+
+The halfer rejects this last step.
+Under the halfer's measure, Heads/Monday carries weight $\frac{1}{2}$ and Tails/Monday
+carries weight $\frac{1}{4}$, so $P(\mathrm{Tails}\mid\mathrm{Monday}) = \tfrac{1/4}{3/4} = \tfrac{1}{3}$,
+not $\tfrac{1}{2}$.
+The halfer distribution is not uniform over waking occasions, so equal weight to
+remaining compatible scenarios fails when conditioning on the day.
+In the formalization this is exactly the one field where the two records diverge:
+\texttt{ThirderPriors} asserts \texttt{tails-given-monday}$\;=\tfrac{1}{2}$,
+while \texttt{HalferPriors} replaces it with the marginal constraint
+\texttt{heads-prior}$\;=\tfrac{1}{2}$, which is incompatible with the indifference
+principle above.
 
 Formally, the disagreement surfaces as a contradiction: no single distribution
 $\mu$ can satisfy \texttt{HalferPriors} and \texttt{ThirderPriors} simultaneously.
